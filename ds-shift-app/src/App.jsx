@@ -1,11 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 
 // ─── Constants ───────────────────────────────────────────
-const GROUPS = {
-  ogaki: "大垣周辺店舗",
-  kitagata: "北方周辺店舗",
-};
-
 const SHIFT_TYPES = {
   work: { label: "出勤", color: "#2563EB", bg: "#EFF6FF", emoji: "○" },
   off: { label: "休み", color: "#9CA3AF", bg: "#F3F4F6", emoji: "×" },
@@ -122,10 +117,12 @@ const dbParenToMap = (rows) => {
   return map;
 };
 
-// Convert event_overrides rows to app format map
-const dbEventToMap = (rows) => {
+// Convert event_overrides rows to app format map (keyed by all groups dynamically)
+const dbEventToMap = (rows, groupIds) => {
   const map = {};
-  rows.forEach((r) => { map[`ogaki_${r.day}_${r.staff_id}`] = true; map[`kitagata_${r.day}_${r.staff_id}`] = true; });
+  rows.forEach((r) => {
+    groupIds.forEach((gid) => { map[`${gid}_${r.day}_${r.staff_id}`] = true; });
+  });
   return map;
 };
 
@@ -365,12 +362,13 @@ function TopPage({ onNavigate }) {
 }
 
 // ─── STAFF SELECT ────────────────────────────────────────
-function StaffSelectPage({ staffList, onSelect, onBack }) {
+function StaffSelectPage({ staffList, groups, onSelect, onBack }) {
   const grouped = useMemo(() => {
-    const g = { ogaki: [], kitagata: [] };
-    staffList.forEach((s) => g[s.group]?.push(s));
+    const g = {};
+    groups.forEach((gr) => { g[gr.id] = []; });
+    staffList.forEach((s) => { if (g[s.group]) g[s.group].push(s); });
     return g;
-  }, [staffList]);
+  }, [staffList, groups]);
 
   return (
     <>
@@ -382,31 +380,21 @@ function StaffSelectPage({ staffList, onSelect, onBack }) {
             <p style={{ fontSize: 13 }}>管理者にスタッフ登録を依頼してください</p>
           </div>
         ) : (
-          Object.entries(GROUPS).map(([key, label]) => (
-            <div key={key} style={{ marginBottom: 20 }}>
+          groups.map((gr) => (
+            <div key={gr.id} style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#64748B", marginBottom: 8, paddingLeft: 4 }}>
-                {label}
+                {gr.name}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {grouped[key]?.map((staff) => (
+                {grouped[gr.id]?.map((staff) => (
                   <button
                     key={staff.id}
                     style={{
                       ...styles.card,
-                      marginBottom: 0,
-                      padding: "16px 20px",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      border: "1.5px solid #E2E8F0",
-                      transition: "all 0.12s",
-                      textAlign: "left",
-                      fontFamily: "inherit",
-                      fontSize: 16,
-                      fontWeight: 500,
-                      color: "#1E293B",
-                      background: "#FFFFFF",
+                      marginBottom: 0, padding: "16px 20px", cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      border: "1.5px solid #E2E8F0", transition: "all 0.12s", textAlign: "left",
+                      fontFamily: "inherit", fontSize: 16, fontWeight: 500, color: "#1E293B", background: "#FFFFFF",
                     }}
                     onClick={() => onSelect(staff)}
                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#2563EB"; e.currentTarget.style.background = "#F8FAFF"; }}
@@ -416,7 +404,7 @@ function StaffSelectPage({ staffList, onSelect, onBack }) {
                     <span style={{ color: "#94A3B8", fontSize: 14 }}>→</span>
                   </button>
                 ))}
-                {(!grouped[key] || grouped[key].length === 0) && (
+                {(!grouped[gr.id] || grouped[gr.id].length === 0) && (
                   <div style={{ color: "#94A3B8", fontSize: 13, paddingLeft: 4 }}>スタッフなし</div>
                 )}
               </div>
@@ -429,7 +417,7 @@ function StaffSelectPage({ staffList, onSelect, onBack }) {
 }
 
 // ─── SHIFT INPUT ─────────────────────────────────────────
-function ShiftInputPage({ staff, year, month, existingShifts, onSubmit, onBack, onChangeMonth }) {
+function ShiftInputPage({ staff, year, month, existingShifts, onSubmit, onBack, onChangeMonth, deadline, isLocked }) {
   const days = getDaysInMonth(year, month);
   const [shifts, setShifts] = useState({});
 
@@ -439,10 +427,10 @@ function ShiftInputPage({ staff, year, month, existingShifts, onSubmit, onBack, 
   }, [existingShifts, year, month]);
 
   const toggle = (d) => {
+    if (isLocked) return;
     setShifts((prev) => {
       const cur = prev[d];
       if (!cur) return { ...prev, [d]: "work" };
-      if (cur === "work") return { ...prev, [d]: "off" };
       const next = { ...prev };
       delete next[d];
       return next;
@@ -457,9 +445,27 @@ function ShiftInputPage({ staff, year, month, existingShifts, onSubmit, onBack, 
       <div style={styles.container}>
         <MonthSelector year={year} month={month} onChange={onChangeMonth} />
 
-        <div style={{ ...styles.card, padding: 16 }}>
+        {/* Deadline info */}
+        {deadline && (
+          <div style={{
+            ...styles.card, padding: "12px 16px", marginBottom: 12,
+            background: isLocked ? "#FEF2F2" : "#FFFBEB",
+            borderColor: isLocked ? "#FECACA" : "#FDE68A",
+          }}>
+            <div style={{ fontSize: 13, color: isLocked ? "#DC2626" : "#92400E", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 16 }}>{isLocked ? "🔒" : "⏰"}</span>
+              {isLocked ? (
+                <span><strong>提出期限を過ぎています</strong>（期限: {deadline}）。変更が必要な場合は管理者にご連絡ください。</span>
+              ) : (
+                <span>提出期限: <strong>{deadline}</strong></span>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div style={{ ...styles.card, padding: 16, opacity: isLocked ? 0.6 : 1 }}>
           <div style={{ fontSize: 13, color: "#64748B", marginBottom: 12, textAlign: "center" }}>
-            日付をタップして「出勤 ○ → 休み × → 未入力」を切り替え
+            {isLocked ? "提出期限を過ぎているため編集できません" : "日付をタップして「出勤 ○ → 未入力」を切り替え"}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 8 }}>
@@ -517,15 +523,16 @@ function ShiftInputPage({ staff, year, month, existingShifts, onSubmit, onBack, 
           </span>
           <div style={{ display: "flex", gap: 12, fontSize: 13 }}>
             <span style={{ color: SHIFT_TYPES.work.color }}>○ 出勤</span>
-            <span style={{ color: SHIFT_TYPES.off.color }}>× 休み</span>
+            <span style={{ color: "#CBD5E1" }}>ー 未入力</span>
           </div>
         </div>
 
         <button
-          style={{ ...styles.btn("#2563EB"), width: "100%" }}
-          onClick={() => onSubmit(shifts)}
+          style={{ ...styles.btn(isLocked ? "#94A3B8" : "#2563EB"), width: "100%", cursor: isLocked ? "not-allowed" : "pointer" }}
+          onClick={() => !isLocked && onSubmit(shifts)}
+          disabled={isLocked}
         >
-          ✓ シフトを提出する
+          {isLocked ? "🔒 提出期限が過ぎています" : "✓ シフトを提出する"}
         </button>
       </div>
     </>
@@ -606,7 +613,15 @@ function AdminLoginPage({ onLogin, onBack, adminPass }) {
 }
 
 // ─── ADMIN DASHBOARD ─────────────────────────────────────
-function AdminDashboard({ staffList, shiftsData, year, month, onChangeMonth, onNavigate, onLogout }) {
+function AdminDashboard({ staffList, shiftsData, year, month, onChangeMonth, onNavigate, onLogout, deadlines, onSaveDeadline, onRemoveDeadline, groups }) {
+  const [deadlineInput, setDeadlineInput] = useState("");
+
+  const dlKey = `${year}-${month}`;
+  const currentDeadline = deadlines[dlKey] || "";
+
+  useEffect(() => {
+    setDeadlineInput(currentDeadline);
+  }, [currentDeadline]);
   const submitted = useMemo(() => {
     const key = `${year}-${month}`;
     return staffList.filter((s) => shiftsData[`${s.id}_${key}`]);
@@ -655,16 +670,16 @@ function AdminDashboard({ staffList, shiftsData, year, month, onChangeMonth, onN
             <span style={{ color: "#2563EB" }}>→</span>
           </button>
 
-          {Object.entries(GROUPS).map(([key, label]) => (
+          {groups.map((gr) => (
             <button
-              key={key}
+              key={gr.id}
               style={{ ...styles.card, marginBottom: 0, padding: "18px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", border: "1.5px solid #E2E8F0", fontFamily: "inherit", textAlign: "left", background: "#FFFFFF" }}
-              onClick={() => onNavigate("calendar", key)}
+              onClick={() => onNavigate("calendar", gr.id)}
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#2563EB"; }}
               onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E2E8F0"; }}
             >
               <div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: "#1E293B" }}>📋 {label}（簡易表示）</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: "#1E293B" }}>📋 {gr.name}（簡易表示）</div>
                 <div style={{ fontSize: 13, color: "#64748B", marginTop: 2 }}>スタッフごとの出勤状況を一覧</div>
               </div>
               <span style={{ color: "#94A3B8" }}>→</span>
@@ -679,6 +694,18 @@ function AdminDashboard({ staffList, shiftsData, year, month, onChangeMonth, onN
             <div>
               <div style={{ fontSize: 16, fontWeight: 600, color: "#1E293B" }}>👥 スタッフ管理</div>
               <div style={{ fontSize: 13, color: "#64748B", marginTop: 2 }}>追加・編集・連絡先・グループ変更</div>
+            </div>
+            <span style={{ color: "#94A3B8" }}>→</span>
+          </button>
+          <button
+            style={{ ...styles.card, marginBottom: 0, padding: "18px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", border: "1.5px solid #E2E8F0", fontFamily: "inherit", textAlign: "left", background: "#FFFFFF" }}
+            onClick={() => onNavigate("groupManage")}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#2563EB"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E2E8F0"; }}
+          >
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: "#1E293B" }}>🏪 店舗グループ管理</div>
+              <div style={{ fontSize: 13, color: "#64748B", marginTop: 2 }}>店舗の追加・編集・削除</div>
             </div>
             <span style={{ color: "#94A3B8" }}>→</span>
           </button>
@@ -708,31 +735,168 @@ function AdminDashboard({ staffList, shiftsData, year, month, onChangeMonth, onN
             </div>
           </div>
         )}
+
+        {/* 提出期限設定 */}
+        <div style={styles.card}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>⏰ シフト提出期限</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              type="date"
+              style={{ ...styles.input, flex: "1 1 180px" }}
+              value={deadlineInput}
+              onChange={(e) => setDeadlineInput(e.target.value)}
+            />
+            <button
+              style={styles.btnSm("#2563EB")}
+              onClick={() => {
+                if (deadlineInput) onSaveDeadline(year, month, deadlineInput);
+              }}
+            >
+              設定
+            </button>
+            {currentDeadline && (
+              <button
+                style={styles.btnSm("#EF4444", true)}
+                onClick={() => onRemoveDeadline(year, month)}
+              >
+                解除
+              </button>
+            )}
+          </div>
+          {currentDeadline && (
+            <div style={{ fontSize: 13, color: "#475569", marginTop: 8 }}>
+              現在の期限: <strong>{currentDeadline}</strong>
+              {new Date(currentDeadline) < new Date(new Date().toDateString())
+                ? <span style={{ color: "#EF4444", marginLeft: 8 }}>（期限切れ — スタッフは編集不可）</span>
+                : <span style={{ color: "#10B981", marginLeft: 8 }}>（受付中）</span>
+              }
+            </div>
+          )}
+          {!currentDeadline && (
+            <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 8 }}>
+              ※ 期限を設定しない場合、スタッフはいつでもシフトを提出・変更できます
+            </div>
+          )}
+        </div>
       </div>
     </>
   );
 }
 
 // ─── GROUP CALENDAR (simple horizontal table) ────────────
-function GroupCalendar({ group, staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, onToggleParen, eventOverrides, onToggleEvent }) {
-  // Show all staff, own group first, then other group
+function GroupCalendar({ group, groups, staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, onToggleParen, eventOverrides, onToggleEvent, onSaveShift }) {
   const ownStaff = useMemo(() => staffList.filter((s) => s.group === group), [staffList, group]);
   const otherStaff = useMemo(() => staffList.filter((s) => s.group !== group), [staffList, group]);
   const allStaff = useMemo(() => [...ownStaff, ...otherStaff], [ownStaff, otherStaff]);
   const days = getDaysInMonth(year, month);
 
+  const [editMode, setEditMode] = useState(false);
+  const [editAction, setEditAction] = useState(null);
+
+  const applyAction = (staffId, d) => {
+    if (!editMode || !editAction) return;
+
+    if (editAction === "paren") {
+      onToggleParen(group, d, staffId);
+      return;
+    }
+    if (editAction === "event") {
+      onToggleEvent(group, d, staffId);
+      return;
+    }
+
+    const key = `${staffId}_${year}-${month}`;
+    const existing = shiftsData[key]?.shifts || {};
+    const updated = { ...existing };
+
+    if (editAction === "work") {
+      updated[d] = "work";
+    } else if (editAction === "clear") {
+      delete updated[d];
+    }
+    onSaveShift(staffId, year, month, updated);
+  };
+
+  const actionButtons = [
+    { key: "work", label: "○ 出勤", color: "#2563EB", bg: "#EFF6FF" },
+    { key: "clear", label: "ー 削除", color: "#EF4444", bg: "#FEF2F2" },
+    { key: "paren", label: "( ) 括弧切替", color: "#6366F1", bg: "#EEF2FF" },
+    { key: "event", label: "🎪 イベント", color: "#F59E0B", bg: "#FFFBEB" },
+  ];
+
   return (
     <>
-      <Header title={GROUPS[group]} onBack={onBack} />
+      <Header title={groups.find((g) => g.id === group)?.name || group} onBack={onBack} />
       <div style={{ ...styles.container, maxWidth: 1200 }}>
         <MonthSelector year={year} month={month} onChange={onChangeMonth} />
 
-        <div style={{ ...styles.card, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 16 }}>💡</span>
-          <div style={{ fontSize: 13, color: "#475569" }}>
-            <strong>クリック</strong>：括弧あり/なし切替 ／ <strong>右クリック（長押し）</strong>：イベント派遣に切替
+        {/* Edit Mode Toggle */}
+        <div style={{
+          ...styles.card, padding: "12px 16px", marginBottom: 12,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          border: editMode ? "2px solid #2563EB" : "1px solid #E2E8F0",
+          background: editMode ? "#F8FAFF" : "#FFFFFF",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>{editMode ? "✏️" : "👁"}</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: editMode ? "#2563EB" : "#475569" }}>
+              {editMode ? "編集モード ON" : "閲覧モード"}
+            </span>
           </div>
+          <button
+            style={{
+              ...styles.btnSm(editMode ? "#EF4444" : "#2563EB"),
+              minWidth: 100,
+            }}
+            onClick={() => {
+              setEditMode(!editMode);
+              setEditAction(null);
+            }}
+          >
+            {editMode ? "編集を終了" : "✏️ 編集する"}
+          </button>
         </div>
+
+        {/* Action Buttons (visible only in edit mode) */}
+        {editMode && (
+          <div style={{
+            ...styles.card, padding: "12px 16px", marginBottom: 12,
+            position: "sticky", top: 56, zIndex: 50,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          }}>
+            <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>
+              操作を選んでから、表のセルをタップしてください
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {actionButtons.map((ab) => (
+                <button
+                  key={ab.key}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: editAction === ab.key ? `2.5px solid ${ab.color}` : "1.5px solid #E2E8F0",
+                    background: editAction === ab.key ? ab.bg : "#FFFFFF",
+                    color: ab.color,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    transition: "all 0.15s",
+                    boxShadow: editAction === ab.key ? `0 0 0 3px ${ab.color}22` : "none",
+                  }}
+                  onClick={() => setEditAction(editAction === ab.key ? null : ab.key)}
+                >
+                  {ab.label}
+                </button>
+              ))}
+            </div>
+            {editAction && (
+              <div style={{ fontSize: 12, color: "#2563EB", marginTop: 8, fontWeight: 500 }}>
+                ▶ 「{actionButtons.find((a) => a.key === editAction)?.label}」を選択中 — セルをタップして適用
+              </div>
+            )}
+          </div>
+        )}
 
         {allStaff.length === 0 ? (
           <div style={{ ...styles.card, textAlign: "center", color: "#64748B" }}>
@@ -797,48 +961,48 @@ function GroupCalendar({ group, staffList, shiftsData, year, month, onChangeMont
                         const val = shifts[d];
                         const st = val ? SHIFT_TYPES[val] : null;
                         const we = isWeekend(year, month, d);
+                        const canClick = editMode && editAction;
 
-                        // Show paren status for work days
+                        let cellContent = st?.emoji || "ー";
+                        let cellColor = st?.color || "#E2E8F0";
+                        let cellBg = val ? st.bg : we ? "#FAFAFA" : "transparent";
+                        let cellDecoration = "none";
+                        let cellFontSize = 14;
+                        let cellPadding = "8px 0";
+
                         if (val === "work") {
                           const overrideKey = `${group}_${d}_${staff.id}`;
                           const isEvent = !!eventOverrides[overrideKey];
                           const overridden = !!parenOverrides[overrideKey];
                           const hasParen = isOther ? !overridden : overridden;
                           const displayName = getLastName(staff);
-                          const label = isEvent
+                          cellContent = isEvent
                             ? `${displayName}(イベ)`
                             : hasParen ? `(${displayName})` : displayName;
-
-                          return (
-                            <td key={d} style={{
-                              textAlign: "center", padding: "4px 2px",
-                              borderBottom: "1px solid #F1F5F9",
-                              background: isEvent ? "#FEF2F2" : st.bg,
-                              fontSize: 12, fontWeight: 600,
-                              color: isEvent ? "#EF4444" : hasParen ? "#6366F1" : st.color,
-                              cursor: "pointer",
-                              textDecoration: isEvent ? "line-through" : "none",
-                            }}
-                            onClick={() => onToggleParen(group, d, staff.id)}
-                            onContextMenu={(e) => { e.preventDefault(); onToggleEvent(group, d, staff.id); }}
-                            title="クリック: 括弧切替 ／ 右クリック: イベント派遣"
-                            onMouseEnter={(e) => { e.currentTarget.style.background = "#E0E7FF"; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = isEvent ? "#FEF2F2" : st.bg; }}
-                            >
-                              {label}
-                            </td>
-                          );
+                          cellColor = isEvent ? "#EF4444" : hasParen ? "#6366F1" : st.color;
+                          cellBg = isEvent ? "#FEF2F2" : st.bg;
+                          cellDecoration = isEvent ? "line-through" : "none";
+                          cellFontSize = 12;
+                          cellPadding = "4px 2px";
                         }
 
                         return (
                           <td key={d} style={{
-                            textAlign: "center", padding: "8px 0",
+                            textAlign: "center", padding: cellPadding,
                             borderBottom: "1px solid #F1F5F9",
-                            background: val ? st.bg : we ? "#FAFAFA" : "transparent",
-                            fontWeight: 700, fontSize: 14,
-                            color: st?.color || "#E2E8F0",
-                          }}>
-                            {st?.emoji || "ー"}
+                            background: cellBg,
+                            fontWeight: val === "work" ? 600 : 700,
+                            fontSize: cellFontSize,
+                            color: cellColor,
+                            textDecoration: cellDecoration,
+                            cursor: canClick ? "pointer" : "default",
+                            outline: canClick ? "1px dashed #CBD5E1" : "none",
+                          }}
+                          onClick={() => canClick && applyAction(staff.id, d)}
+                          onMouseEnter={(e) => { if (canClick) e.currentTarget.style.background = "#E0E7FF"; }}
+                          onMouseLeave={(e) => { if (canClick) e.currentTarget.style.background = cellBg; }}
+                          >
+                            {cellContent}
                           </td>
                         );
                       })}
@@ -854,9 +1018,12 @@ function GroupCalendar({ group, staffList, shiftsData, year, month, onChangeMont
   );
 }
 
+
 // ─── PDF CALENDAR PAGE ───────────────────────────────────
-function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, onToggleParen, eventOverrides, onToggleEvent }) {
+function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, onToggleParen, eventOverrides, onToggleEvent, groups, onSaveShift }) {
   const days = getDaysInMonth(year, month);
+  const [editMode, setEditMode] = useState(false);
+  const [editAction, setEditAction] = useState(null);
 
   const buildDayEntries = (viewGroup) => {
     const entries = {};
@@ -891,8 +1058,13 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
     return entries;
   };
 
-  const ogakiEntries = useMemo(() => buildDayEntries("ogaki"), [staffList, shiftsData, year, month, parenOverrides, eventOverrides]);
-  const kitagataEntries = useMemo(() => buildDayEntries("kitagata"), [staffList, shiftsData, year, month, parenOverrides, eventOverrides]);
+  const allGroupEntries = useMemo(() => {
+    const result = {};
+    groups.forEach((gr) => {
+      result[gr.id] = buildDayEntries(gr.id);
+    });
+    return result;
+  }, [staffList, shiftsData, year, month, parenOverrides, eventOverrides, groups]);
 
   const contactList = useMemo(() => {
     return staffList.filter((s) => s.phone && s.phone.trim() !== "");
@@ -957,8 +1129,9 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
   };
 
   const handlePrint = () => {
-    const page1 = renderCalendarHTML(GROUPS.ogaki, ogakiEntries);
-    const page2 = renderCalendarHTML(GROUPS.kitagata, kitagataEntries);
+    const allPages = groups.map((gr) =>
+      renderCalendarHTML(gr.name, allGroupEntries[gr.id] || {})
+    ).join("\n");
 
     const html = `<!DOCTYPE html>
 <html lang="ja">
@@ -1006,43 +1179,44 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
     }
     .pdf-page {
       width: 210mm;
-      min-height: 297mm;
-      padding: 8mm 6mm;
+      height: 296mm;
+      padding: 6mm 6mm 4mm;
       margin: 0 auto 20px;
       background: white;
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
       page-break-after: always;
+      overflow: hidden;
     }
     .pdf-page:last-child { page-break-after: auto; }
     .pdf-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 6mm;
-      padding: 0 4mm 2mm;
+      margin-bottom: 3mm;
+      padding: 0 2mm 1.5mm;
       border-bottom: 1px solid #000;
     }
     .pdf-month {
-      font-size: 20pt;
+      font-size: 18pt;
       font-weight: 700;
       letter-spacing: 0.02em;
       border-bottom: 2px solid #000;
       padding-bottom: 1mm;
     }
     .pdf-title {
-      font-size: 15pt;
+      font-size: 14pt;
       font-weight: 500;
     }
     .pdf-calendar {
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
-      margin-bottom: 4mm;
+      margin-bottom: 2mm;
     }
     .pdf-calendar th {
       border: 1px solid #333;
-      padding: 2mm 0;
-      font-size: 11pt;
+      padding: 1mm 0;
+      font-size: 9pt;
       font-weight: 600;
       text-align: center;
       background: #F5F5F5;
@@ -1052,10 +1226,10 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
     .pdf-calendar td {
       border: 1px solid #333;
       vertical-align: top;
-      padding: 1.5mm 1mm 2mm;
-      height: 30mm;
-      font-size: 10pt;
-      line-height: 1.35;
+      padding: 0.8mm 0.5mm 1mm;
+      height: 22mm;
+      font-size: 8pt;
+      line-height: 1.25;
       overflow: hidden;
       text-align: center;
     }
@@ -1064,18 +1238,18 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
     .pdf-calendar td.empty-day { background: #FAFAFA; }
     .pdf-daynum {
       font-weight: 700;
-      font-size: 11pt;
+      font-size: 9pt;
       display: block;
-      margin-bottom: 1mm;
+      margin-bottom: 0.3mm;
       text-align: center;
     }
     .pdf-daynum.sun { color: #C00000; }
     .pdf-daynum.sat { color: #0070C0; }
     .pdf-name {
       display: block;
-      font-size: 10.5pt;
+      font-size: 8pt;
       font-weight: 500;
-      line-height: 1.4;
+      line-height: 1.25;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1086,34 +1260,34 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
       font-weight: 400;
     }
     .pdf-contacts {
-      margin-top: 7mm;
-      padding: 4mm 6mm;
+      margin-top: 2mm;
+      padding: 2mm 4mm;
       border: 1px solid #333;
       background: #FAFAFA;
     }
     .pdf-contacts-title {
-      font-size: 13pt;
+      font-size: 10pt;
       font-weight: 700;
-      margin-bottom: 3mm;
+      margin-bottom: 1.5mm;
       letter-spacing: 0.05em;
     }
     .pdf-contacts-list {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 2.5mm 8mm;
-      font-size: 12pt;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1mm 4mm;
+      font-size: 9pt;
     }
     .pdf-contact-item {
       display: flex;
       align-items: baseline;
-      gap: 4mm;
+      gap: 2mm;
     }
     .pdf-contact-item::before {
       content: "・";
       margin-right: 0.5mm;
     }
     .pdf-contact-name {
-      min-width: 16mm;
+      min-width: 10mm;
       font-weight: 600;
     }
     .pdf-contact-phone {
@@ -1133,8 +1307,7 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
     <button class="secondary" onclick="window.close()">閉じる</button>
     <div class="hint">「印刷 / PDF保存」を押して、送信先で「PDFに保存」を選ぶとPDFが作成できます。</div>
   </div>
-  ${page1}
-  ${page2}
+  ${allPages}
 </body>
 </html>`;
 
@@ -1173,13 +1346,64 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
           </div>
         </div>
 
-        <div style={{ ...styles.card, padding: "14px 20px", display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 18 }}>💡</span>
-          <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.6 }}>
-            <strong>クリック</strong>：括弧あり/なしを切替 ／ <strong>右クリック（長押し）</strong>：イベント派遣に切替<br />
-            イベント派遣にするとPDFから名前が消えます。<span style={{ color: "#EF4444", textDecoration: "line-through" }}>名前(イベント)</span> で表示されます。
+        {/* Edit Mode Toggle */}
+        <div style={{
+          ...styles.card, padding: "12px 16px", marginBottom: 12,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          border: editMode ? "2px solid #2563EB" : "1px solid #E2E8F0",
+          background: editMode ? "#F8FAFF" : "#FFFFFF",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>{editMode ? "✏️" : "👁"}</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: editMode ? "#2563EB" : "#475569" }}>
+              {editMode ? "編集モード ON" : "閲覧モード"}
+            </span>
           </div>
+          <button
+            style={{ ...styles.btnSm(editMode ? "#EF4444" : "#2563EB"), minWidth: 100 }}
+            onClick={() => { setEditMode(!editMode); setEditAction(null); }}
+          >
+            {editMode ? "編集を終了" : "✏️ 編集する"}
+          </button>
         </div>
+
+        {editMode && (
+          <div style={{
+            ...styles.card, padding: "12px 16px", marginBottom: 12,
+            position: "sticky", top: 56, zIndex: 50,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          }}>
+            <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>
+              操作を選んでから、カレンダーの名前をタップしてください
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[
+                { key: "paren", label: "( ) 括弧切替", color: "#6366F1", bg: "#EEF2FF" },
+                { key: "event", label: "🎪 イベント", color: "#F59E0B", bg: "#FFFBEB" },
+              ].map((ab) => (
+                <button
+                  key={ab.key}
+                  style={{
+                    padding: "8px 14px", borderRadius: 8,
+                    border: editAction === ab.key ? `2.5px solid ${ab.color}` : "1.5px solid #E2E8F0",
+                    background: editAction === ab.key ? ab.bg : "#FFFFFF",
+                    color: ab.color, fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+                    boxShadow: editAction === ab.key ? `0 0 0 3px ${ab.color}22` : "none",
+                  }}
+                  onClick={() => setEditAction(editAction === ab.key ? null : ab.key)}
+                >
+                  {ab.label}
+                </button>
+              ))}
+            </div>
+            {editAction && (
+              <div style={{ fontSize: 12, color: "#2563EB", marginTop: 8, fontWeight: 500 }}>
+                ▶ 「{editAction === "paren" ? "( ) 括弧切替" : "🎪 イベント"}」を選択中 — 名前をタップして適用
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ fontSize: 13, color: "#64748B", textAlign: "center", margin: "16px 0 8px" }}>
           ↓ 以下がPDFに出力される内容（画面プレビュー）です ↓
@@ -1190,7 +1414,6 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
         <style>{`
           .pdf-page {
             width: 194mm;
-            min-height: 278mm;
             padding: 4mm 2mm;
             margin: 0 auto 20px;
             background: white;
@@ -1202,31 +1425,31 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 6mm;
-            padding: 0 4mm 2mm;
+            margin-bottom: 3mm;
+            padding: 0 2mm 1.5mm;
             border-bottom: 1px solid #000;
           }
           .pdf-month {
-            font-size: 20pt;
+            font-size: 18pt;
             font-weight: 700;
             letter-spacing: 0.02em;
             border-bottom: 2px solid #000;
             padding-bottom: 1mm;
           }
           .pdf-title {
-            font-size: 15pt;
+            font-size: 14pt;
             font-weight: 500;
           }
           .pdf-calendar {
             width: 100%;
             border-collapse: collapse;
             table-layout: fixed;
-            margin-bottom: 4mm;
+            margin-bottom: 2mm;
           }
           .pdf-calendar th {
             border: 1px solid #333;
-            padding: 2mm 0;
-            font-size: 11pt;
+            padding: 1mm 0;
+            font-size: 9pt;
             font-weight: 600;
             text-align: center;
             background: #F5F5F5;
@@ -1236,10 +1459,10 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
           .pdf-calendar td {
             border: 1px solid #333;
             vertical-align: top;
-            padding: 1.5mm 1mm 2mm;
-            height: 30mm;
-            font-size: 10pt;
-            line-height: 1.35;
+            padding: 0.8mm 0.5mm 1mm;
+            height: 22mm;
+            font-size: 8pt;
+            line-height: 1.25;
             overflow: hidden;
             text-align: center;
           }
@@ -1248,18 +1471,18 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
           .pdf-calendar td.empty-day { background: #FAFAFA; border: 1px solid #DDD; }
           .pdf-daynum {
             font-weight: 700;
-            font-size: 11pt;
+            font-size: 9pt;
             display: block;
-            margin-bottom: 1mm;
+            margin-bottom: 0.3mm;
             text-align: center;
           }
           .pdf-daynum.sun { color: #C00000; }
           .pdf-daynum.sat { color: #0070C0; }
           .pdf-name {
             display: block;
-            font-size: 10.5pt;
+            font-size: 8pt;
             font-weight: 500;
-            line-height: 1.4;
+            line-height: 1.25;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -1270,79 +1493,65 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
             font-weight: 400;
           }
           .pdf-contacts {
-            margin-top: 7mm;
-            padding: 4mm 6mm;
+            margin-top: 2mm;
+            padding: 2mm 4mm;
             border: 1px solid #333;
             background: #FAFAFA;
           }
           .pdf-contacts-title {
-            font-size: 13pt;
+            font-size: 10pt;
             font-weight: 700;
-            margin-bottom: 3mm;
+            margin-bottom: 1.5mm;
             letter-spacing: 0.05em;
           }
           .pdf-contacts-list {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2.5mm 8mm;
-            font-size: 12pt;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 1mm 4mm;
+            font-size: 9pt;
           }
           .pdf-contact-item {
             display: flex;
             align-items: baseline;
-            gap: 4mm;
+            gap: 2mm;
           }
           .pdf-contact-item::before {
             content: "・";
             margin-right: 0.5mm;
           }
           .pdf-contact-name {
-            min-width: 16mm;
+            min-width: 10mm;
             font-weight: 600;
           }
         `}</style>
 
-        <div className="pdf-page">
-          <CalendarPage
-            monthStr={monthStr}
-            title={GROUPS.ogaki}
-            year={year}
-            month={month}
-            days={days}
-            entries={ogakiEntries}
-            contacts={contactList}
-            onToggleParen={onToggleParen}
-            eventOverrides={eventOverrides}
-            onToggleEvent={onToggleEvent}
-            viewGroup="ogaki"
-            staffList={staffList}
-            shiftsData={shiftsData}
-          />
-        </div>
-
-        <div className="pdf-page page-break">
-          <CalendarPage
-            monthStr={monthStr}
-            title={GROUPS.kitagata}
-            year={year}
-            month={month}
-            days={days}
-            entries={kitagataEntries}
-            contacts={contactList}
-            onToggleParen={onToggleParen}
-            eventOverrides={eventOverrides}
-            onToggleEvent={onToggleEvent}
-            viewGroup="kitagata"
-            staffList={staffList}
-            shiftsData={shiftsData}
-          />
-        </div>
+        {groups.map((gr, gi) => (
+          <div key={gr.id} className={`pdf-page${gi > 0 ? " page-break" : ""}`}>
+            <CalendarPage
+              monthStr={monthStr}
+              title={gr.name}
+              year={year}
+              month={month}
+              days={days}
+              entries={allGroupEntries[gr.id] || {}}
+              contacts={contactList}
+              onToggleParen={onToggleParen}
+              eventOverrides={eventOverrides}
+              onToggleEvent={onToggleEvent}
+              viewGroup={gr.id}
+              staffList={staffList}
+              shiftsData={shiftsData}
+              editMode={editMode}
+              editAction={editAction}
+            />
+          </div>
+        ))}
       </div>
     </>
   );
 }
 
-function CalendarPage({ monthStr, title, year, month, days, entries, contacts, onToggleParen, eventOverrides, onToggleEvent, viewGroup, staffList, shiftsData }) {
+function CalendarPage({ monthStr, title, year, month, days, entries, contacts, onToggleParen, eventOverrides, onToggleEvent, viewGroup, staffList, shiftsData, editMode, editAction }) {
   const firstDay = new Date(year, month - 1, 1).getDay();
   const cells = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
@@ -1371,17 +1580,21 @@ function CalendarPage({ monthStr, title, year, month, days, entries, contacts, o
     return result;
   }, [eventOverrides, staffList, shiftsData, viewGroup, year, month, days]);
 
-  const handleContextMenu = (e, vg, day, staffId) => {
-    e.preventDefault();
-    if (onToggleEvent) onToggleEvent(vg, day, staffId);
+  const canClick = editMode && editAction;
+
+  const handleNameClick = (vg, day, staffId) => {
+    if (!canClick) return;
+    if (editAction === "paren") onToggleParen(vg, day, staffId);
+    else if (editAction === "event") onToggleEvent(vg, day, staffId);
   };
 
-  const nameStyle = (isClickable) => ({
-    cursor: isClickable ? "pointer" : "default",
+  const nameStyle = {
+    cursor: canClick ? "pointer" : "default",
     borderRadius: 3,
     padding: "0 2px",
     transition: "background 0.15s",
-  });
+    outline: canClick ? "1px dashed #CBD5E1" : "none",
+  };
 
   return (
     <>
@@ -1420,30 +1633,26 @@ function CalendarPage({ monthStr, title, year, month, days, entries, contacts, o
                           <span
                             key={`p${i}`}
                             className="pdf-name"
-                            style={nameStyle(!!onToggleParen)}
-                            onClick={() => onToggleParen && onToggleParen(e.viewGroup, e.day, e.staffId)}
-                            onContextMenu={(ev) => handleContextMenu(ev, e.viewGroup, e.day, e.staffId)}
-                            onMouseEnter={(ev) => { if (onToggleParen) ev.currentTarget.style.background = "#E0E7FF"; }}
-                            onMouseLeave={(ev) => { if (onToggleParen) ev.currentTarget.style.background = "transparent"; }}
-                            title={onToggleParen ? "クリック: 括弧切替 ／ 右クリック: イベント派遣" : ""}
+                            style={nameStyle}
+                            onClick={() => handleNameClick(e.viewGroup, e.day, e.staffId)}
+                            onMouseEnter={(ev) => { if (canClick) ev.currentTarget.style.background = "#E0E7FF"; }}
+                            onMouseLeave={(ev) => { if (canClick) ev.currentTarget.style.background = "transparent"; }}
                           >{e.name}</span>
                         ))}
                         {entry.secondary.map((e, i) => (
                           <span
                             key={`s${i}`}
                             className="pdf-name secondary"
-                            style={nameStyle(!!onToggleParen)}
-                            onClick={() => onToggleParen && onToggleParen(e.viewGroup, e.day, e.staffId)}
-                            onContextMenu={(ev) => handleContextMenu(ev, e.viewGroup, e.day, e.staffId)}
-                            onMouseEnter={(ev) => { if (onToggleParen) ev.currentTarget.style.background = "#E0E7FF"; }}
-                            onMouseLeave={(ev) => { if (onToggleParen) ev.currentTarget.style.background = "transparent"; }}
-                            title={onToggleParen ? "クリック: 括弧切替 ／ 右クリック: イベント派遣" : ""}
+                            style={nameStyle}
+                            onClick={() => handleNameClick(e.viewGroup, e.day, e.staffId)}
+                            onMouseEnter={(ev) => { if (canClick) ev.currentTarget.style.background = "#E0E7FF"; }}
+                            onMouseLeave={(ev) => { if (canClick) ev.currentTarget.style.background = "transparent"; }}
                           >{e.name}</span>
                         ))}
                       </>
                     )}
-                    {/* Show event-dispatched staff (strikethrough, only in preview) */}
-                    {onToggleEvent && eventStaffByDay[d] && eventStaffByDay[d].map((ev, i) => (
+                    {/* Show event-dispatched staff (strikethrough, only in edit mode) */}
+                    {editMode && eventStaffByDay[d] && eventStaffByDay[d].map((ev, i) => (
                       <span
                         key={`ev${i}`}
                         className="pdf-name"
@@ -1451,16 +1660,15 @@ function CalendarPage({ monthStr, title, year, month, days, entries, contacts, o
                           textDecoration: "line-through",
                           color: "#EF4444",
                           opacity: 0.7,
-                          cursor: "pointer",
+                          cursor: canClick ? "pointer" : "default",
                           borderRadius: 3,
                           padding: "0 2px",
                           fontSize: "8.5pt",
+                          outline: canClick ? "1px dashed #FECACA" : "none",
                         }}
-                        onContextMenu={(e) => { e.preventDefault(); onToggleEvent(viewGroup, d, ev.staffId); }}
-                        onClick={() => {}}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = "#FEE2E2"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                        title="右クリックでイベント派遣を解除"
+                        onClick={() => { if (canClick && editAction === "event") onToggleEvent(viewGroup, d, ev.staffId); }}
+                        onMouseEnter={(e) => { if (canClick) e.currentTarget.style.background = "#FEE2E2"; }}
+                        onMouseLeave={(e) => { if (canClick) e.currentTarget.style.background = "transparent"; }}
                       >{ev.name}(イベント)</span>
                     ))}
                   </td>
@@ -1602,17 +1810,17 @@ function ChangePasswordPage({ adminPass, onSave, onBack }) {
 }
 
 // ─── STAFF MANAGEMENT ────────────────────────────────────
-function StaffManagePage({ staffList, onSave, onBack }) {
+function StaffManagePage({ staffList, groups, onSave, onBack }) {
   const [list, setList] = useState(staffList);
   const [newLastName, setNewLastName] = useState("");
   const [newFirstName, setNewFirstName] = useState("");
   const [newPhone, setNewPhone] = useState("");
-  const [newGroup, setNewGroup] = useState("ogaki");
+  const [newGroup, setNewGroup] = useState(groups[0]?.id || "");
   const [editId, setEditId] = useState(null);
   const [editLastName, setEditLastName] = useState("");
   const [editFirstName, setEditFirstName] = useState("");
   const [editPhone, setEditPhone] = useState("");
-  const [editGroup, setEditGroup] = useState("ogaki");
+  const [editGroup, setEditGroup] = useState(groups[0]?.id || "");
 
   const addStaff = () => {
     if (!newLastName.trim()) return;
@@ -1633,11 +1841,17 @@ function StaffManagePage({ staffList, onSave, onBack }) {
     setNewPhone("");
   };
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
   const deleteStaff = (id) => {
-    if (!confirm("このスタッフを削除しますか？")) return;
-    const updated = list.filter((s) => s.id !== id);
-    setList(updated);
-    onSave(updated);
+    if (confirmDeleteId === id) {
+      const updated = list.filter((s) => s.id !== id);
+      setList(updated);
+      onSave(updated);
+      setConfirmDeleteId(null);
+    } else {
+      setConfirmDeleteId(id);
+    }
   };
 
   const startEdit = (staff) => {
@@ -1704,8 +1918,8 @@ function StaffManagePage({ staffList, onSave, onBack }) {
                 value={newGroup}
                 onChange={(e) => setNewGroup(e.target.value)}
               >
-                {Object.entries(GROUPS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
+                {groups.map((gr) => (
+                  <option key={gr.id} value={gr.id}>{gr.name}</option>
                 ))}
               </select>
               <button style={styles.btn("#2563EB")} onClick={addStaff}>追加</button>
@@ -1716,12 +1930,12 @@ function StaffManagePage({ staffList, onSave, onBack }) {
           </div>
         </div>
 
-        {Object.entries(GROUPS).map(([gKey, gLabel]) => {
-          const members = list.filter((s) => s.group === gKey);
+        {groups.map((gr) => {
+          const members = list.filter((s) => s.group === gr.id);
           return (
-            <div key={gKey} style={{ marginBottom: 16 }}>
+            <div key={gr.id} style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#64748B", marginBottom: 8, paddingLeft: 4 }}>
-                {gLabel}（{members.length}名）
+                {gr.name}（{members.length}名）
               </div>
               {members.length === 0 ? (
                 <div style={{ ...styles.card, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
@@ -1758,8 +1972,8 @@ function StaffManagePage({ staffList, onSave, onBack }) {
                             value={editGroup}
                             onChange={(e) => setEditGroup(e.target.value)}
                           >
-                            {Object.entries(GROUPS).map(([k, v]) => (
-                              <option key={k} value={k}>{v}</option>
+                            {groups.map((gr) => (
+                              <option key={gr.id} value={gr.id}>{gr.name}</option>
                             ))}
                           </select>
                           <button style={styles.btnSm("#10B981")} onClick={saveEdit}>保存</button>
@@ -1781,9 +1995,17 @@ function StaffManagePage({ staffList, onSave, onBack }) {
                             <div style={{ fontSize: 12, color: "#64748B", marginTop: 2 }}>📞 {staff.phone}</div>
                           )}
                         </div>
-                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                          <button style={styles.btnSm("#2563EB", true)} onClick={() => startEdit(staff)}>編集</button>
-                          <button style={styles.btnSm("#EF4444", true)} onClick={() => deleteStaff(staff.id)}>削除</button>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+                          <button style={styles.btnSm("#2563EB", true)} onClick={() => { startEdit(staff); setConfirmDeleteId(null); }}>編集</button>
+                          {confirmDeleteId === staff.id ? (
+                            <>
+                              <span style={{ fontSize: 12, color: "#EF4444", fontWeight: 500 }}>削除する？</span>
+                              <button style={styles.btnSm("#EF4444")} onClick={() => deleteStaff(staff.id)}>はい</button>
+                              <button style={styles.btnSm("#64748B", true)} onClick={() => setConfirmDeleteId(null)}>いいえ</button>
+                            </>
+                          ) : (
+                            <button style={styles.btnSm("#EF4444", true)} onClick={() => deleteStaff(staff.id)}>削除</button>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1793,6 +2015,151 @@ function StaffManagePage({ staffList, onSave, onBack }) {
             </div>
           );
         })}
+      </div>
+    </>
+  );
+}
+
+// ─── GROUP MANAGEMENT ────────────────────────────────────
+function GroupManagePage({ groups, onSave, onBack }) {
+  const [list, setList] = useState(groups);
+  const [newName, setNewName] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState("");
+
+  const addGroup = () => {
+    if (!newName.trim()) return;
+    const id = genId();
+    const maxOrder = list.reduce((max, g) => Math.max(max, g.sort_order || 0), 0);
+    const updated = [...list, { id, name: newName.trim(), sort_order: maxOrder + 1 }];
+    setList(updated);
+    onSave(updated);
+    setNewName("");
+  };
+
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+  const deleteGroup = (id) => {
+    if (confirmDeleteId === id) {
+      const updated = list.filter((g) => g.id !== id);
+      setList(updated);
+      onSave(updated);
+      setConfirmDeleteId(null);
+    } else {
+      setConfirmDeleteId(id);
+    }
+  };
+
+  const startEdit = (group) => {
+    setEditId(group.id);
+    setEditName(group.name);
+  };
+
+  const saveEdit = () => {
+    const updated = list.map((g) => g.id === editId ? { ...g, name: editName.trim() } : g);
+    setList(updated);
+    onSave(updated);
+    setEditId(null);
+  };
+
+  const moveUp = (idx) => {
+    if (idx === 0) return;
+    const updated = [...list];
+    [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
+    updated.forEach((g, i) => { g.sort_order = i + 1; });
+    setList(updated);
+    onSave(updated);
+  };
+
+  const moveDown = (idx) => {
+    if (idx >= list.length - 1) return;
+    const updated = [...list];
+    [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
+    updated.forEach((g, i) => { g.sort_order = i + 1; });
+    setList(updated);
+    onSave(updated);
+  };
+
+  return (
+    <>
+      <Header title="店舗グループ管理" onBack={onBack} />
+      <div style={styles.container}>
+        <div style={styles.card}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>➕ 店舗グループを追加</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              style={{ ...styles.input, flex: 1 }}
+              placeholder="店舗グループ名（例: 岐阜南店舗）"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addGroup()}
+            />
+            <button style={styles.btn("#2563EB")} onClick={addGroup}>追加</button>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 14, fontWeight: 600, color: "#64748B", marginBottom: 8, paddingLeft: 4 }}>
+          登録済み店舗（{list.length}件）
+        </div>
+
+        {list.length === 0 ? (
+          <div style={{ ...styles.card, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
+            店舗グループが登録されていません
+          </div>
+        ) : (
+          list.map((group, idx) => (
+            <div key={group.id} style={{ ...styles.card, marginBottom: 6, padding: "12px 16px" }}>
+              {editId === group.id ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    style={{ ...styles.input, flex: 1 }}
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && saveEdit()}
+                  />
+                  <button style={styles.btnSm("#10B981")} onClick={saveEdit}>保存</button>
+                  <button style={styles.btnSm("#64748B", true)} onClick={() => setEditId(null)}>取消</button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <button
+                        style={{ border: "none", background: "transparent", cursor: idx === 0 ? "default" : "pointer", color: idx === 0 ? "#E2E8F0" : "#64748B", fontSize: 12, padding: 0, fontFamily: "inherit" }}
+                        onClick={() => moveUp(idx)}
+                        disabled={idx === 0}
+                      >▲</button>
+                      <button
+                        style={{ border: "none", background: "transparent", cursor: idx >= list.length - 1 ? "default" : "pointer", color: idx >= list.length - 1 ? "#E2E8F0" : "#64748B", fontSize: 12, padding: 0, fontFamily: "inherit" }}
+                        onClick={() => moveDown(idx)}
+                        disabled={idx >= list.length - 1}
+                      >▼</button>
+                    </div>
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>{group.name}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+                    <button style={styles.btnSm("#2563EB", true)} onClick={() => { startEdit(group); setConfirmDeleteId(null); }}>編集</button>
+                    {confirmDeleteId === group.id ? (
+                      <>
+                        <span style={{ fontSize: 12, color: "#EF4444", fontWeight: 500 }}>削除する？</span>
+                        <button style={styles.btnSm("#EF4444")} onClick={() => deleteGroup(group.id)}>はい</button>
+                        <button style={styles.btnSm("#64748B", true)} onClick={() => setConfirmDeleteId(null)}>いいえ</button>
+                      </>
+                    ) : (
+                      <button style={styles.btnSm("#EF4444", true)} onClick={() => deleteGroup(group.id)}>削除</button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+
+        <div style={{ ...styles.card, background: "#FFFBEB", borderColor: "#FDE68A", marginTop: 12 }}>
+          <div style={{ fontSize: 12, color: "#92400E", lineHeight: 1.6 }}>
+            💡 ▲▼ボタンで表示順を変更できます。この順番がPDFカレンダーのページ順になります。
+          </div>
+        </div>
       </div>
     </>
   );
@@ -1811,6 +2178,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [parenOverrides, setParenOverrides] = useState({});
   const [eventOverrides, setEventOverrides] = useState({});
+  const [deadlines, setDeadlines] = useState({});
+  const [groups, setGroups] = useState([]);
 
   useEffect(() => {
     const styleEl = document.createElement("style");
@@ -1822,19 +2191,25 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [staffRows, shiftRows, adminRows, parenRows, eventRows] = await Promise.all([
+        const [staffRows, shiftRows, adminRows, parenRows, eventRows, deadlineRows, groupRows] = await Promise.all([
           api.get("staff", "order=created_at"),
           api.get("shifts"),
           api.get("admin_settings"),
           api.get("paren_overrides"),
           api.get("event_overrides"),
+          api.get("shift_deadlines"),
+          api.get("groups", "order=sort_order"),
         ]);
         setStaffList(staffRows.map(dbToStaff));
         setShiftsData(dbShiftsToMap(shiftRows));
         const passRow = adminRows.find((r) => r.key === "password");
         setAdminPass(passRow?.value || DEFAULT_ADMIN_PASS);
         setParenOverrides(dbParenToMap(parenRows));
-        setEventOverrides(dbEventToMap(eventRows));
+        setEventOverrides(dbEventToMap(eventRows, groupRows.map((r) => r.id)));
+        const dlMap = {};
+        deadlineRows.forEach((r) => { dlMap[`${r.year}-${r.month}`] = r.deadline_date; });
+        setDeadlines(dlMap);
+        setGroups(groupRows.map((r) => ({ id: r.id, name: r.name, sort_order: r.sort_order })));
       } catch (e) {
         console.error("Load error:", e);
       }
@@ -1868,6 +2243,61 @@ export default function App() {
     } catch (e) { console.error("Save pass error:", e); }
   }, []);
 
+  const saveGroups = useCallback(async (list) => {
+    setGroups(list);
+    try {
+      if (list.length > 0) {
+        await api.upsert("groups", list.map((g) => ({
+          id: g.id, name: g.name, sort_order: g.sort_order || 0,
+        })));
+      }
+      const dbGroups = await api.get("groups");
+      const currentIds = list.map((g) => g.id);
+      const toDelete = dbGroups.filter((r) => !currentIds.includes(r.id));
+      for (const g of toDelete) {
+        await api.del("groups", `id=eq.${g.id}`);
+      }
+    } catch (e) { console.error("Save groups error:", e); }
+  }, []);
+
+  const saveDeadline = useCallback(async (y, m, dateStr) => {
+    const key = `${y}-${m}`;
+    const updated = { ...deadlines, [key]: dateStr };
+    setDeadlines(updated);
+    try {
+      await api.upsert("shift_deadlines", { year: y, month: m, deadline_date: dateStr });
+    } catch (e) { console.error("Save deadline error:", e); }
+  }, [deadlines]);
+
+  const removeDeadline = useCallback(async (y, m) => {
+    const key = `${y}-${m}`;
+    const updated = { ...deadlines };
+    delete updated[key];
+    setDeadlines(updated);
+    try {
+      await api.del("shift_deadlines", `year=eq.${y}&month=eq.${m}`);
+    } catch (e) { console.error("Remove deadline error:", e); }
+  }, [deadlines]);
+
+  const isDeadlinePassed = useCallback((y, m) => {
+    const key = `${y}-${m}`;
+    const dl = deadlines[key];
+    if (!dl) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return new Date(dl) < today;
+  }, [deadlines]);
+
+  const deleteShift = useCallback(async (staffId, y, m) => {
+    const key = `${staffId}_${y}-${m}`;
+    const updated = { ...shiftsData };
+    delete updated[key];
+    setShiftsData(updated);
+    try {
+      await api.del("shifts", `staff_id=eq.${staffId}&year=eq.${y}&month=eq.${m}`);
+    } catch (e) { console.error("Delete shift error:", e); }
+  }, [shiftsData]);
+
   const saveShift = useCallback(async (staffId, y, m, shifts) => {
     const key = `${staffId}_${y}-${m}`;
     const updated = {
@@ -1899,21 +2329,19 @@ export default function App() {
   }, [parenOverrides]);
 
   const toggleEvent = useCallback(async (viewGroup, day, staffId) => {
-    const ogakiKey = `ogaki_${day}_${staffId}`;
-    const kitagataKey = `kitagata_${day}_${staffId}`;
     const updated = { ...eventOverrides };
     const currentKey = `${viewGroup}_${day}_${staffId}`;
     if (updated[currentKey]) {
-      delete updated[ogakiKey];
-      delete updated[kitagataKey];
+      // Remove for all groups
+      groups.forEach((gr) => { delete updated[`${gr.id}_${day}_${staffId}`]; });
       try { await api.del("event_overrides", `day=eq.${day}&staff_id=eq.${staffId}&year=eq.${year}&month=eq.${month}`); } catch (e) { console.error(e); }
     } else {
-      updated[ogakiKey] = true;
-      updated[kitagataKey] = true;
+      // Add for all groups
+      groups.forEach((gr) => { updated[`${gr.id}_${day}_${staffId}`] = true; });
       try { await api.upsert("event_overrides", { day, staff_id: staffId, year, month }); } catch (e) { console.error(e); }
     }
     setEventOverrides(updated);
-  }, [eventOverrides, year, month]);
+  }, [eventOverrides, year, month, groups]);
 
   if (loading) {
     return (
@@ -1939,6 +2367,7 @@ export default function App() {
       {page === "staffSelect" && (
         <StaffSelectPage
           staffList={staffList}
+          groups={groups}
           onSelect={(staff) => {
             setSelectedStaff(staff);
             setYear(currentYear);
@@ -1961,6 +2390,8 @@ export default function App() {
             setPage("complete");
           }}
           onBack={() => setPage("staffSelect")}
+          deadline={deadlines[`${year}-${month}`] || null}
+          isLocked={isDeadlinePassed(year, month)}
         />
       )}
 
@@ -1996,12 +2427,17 @@ export default function App() {
             }
           }}
           onLogout={() => setPage("top")}
+          deadlines={deadlines}
+          onSaveDeadline={saveDeadline}
+          onRemoveDeadline={removeDeadline}
+          groups={groups}
         />
       )}
 
       {page === "calendar" && selectedGroup && (
         <GroupCalendar
           group={selectedGroup}
+          groups={groups}
           staffList={staffList}
           shiftsData={shiftsData}
           year={year}
@@ -2012,6 +2448,7 @@ export default function App() {
           onToggleParen={toggleParen}
           eventOverrides={eventOverrides}
           onToggleEvent={toggleEvent}
+          onSaveShift={saveShift}
         />
       )}
 
@@ -2027,13 +2464,24 @@ export default function App() {
           onToggleParen={toggleParen}
           eventOverrides={eventOverrides}
           onToggleEvent={toggleEvent}
+          groups={groups}
+          onSaveShift={saveShift}
         />
       )}
 
       {page === "staffManage" && (
         <StaffManagePage
           staffList={staffList}
+          groups={groups}
           onSave={saveStaff}
+          onBack={() => setPage("adminDash")}
+        />
+      )}
+
+      {page === "groupManage" && (
+        <GroupManagePage
+          groups={groups}
+          onSave={saveGroups}
           onBack={() => setPage("adminDash")}
         />
       )}
