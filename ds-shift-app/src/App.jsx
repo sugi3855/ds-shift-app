@@ -2499,7 +2499,6 @@ export default function App() {
 
   const saveShift = useCallback(async (staffId, y, m, shifts) => {
     const key = `${staffId}_${y}-${m}`;
-    // If shifts is empty, delete the record
     const hasShifts = Object.keys(shifts).length > 0;
     setShiftsData((prev) => {
       if (!hasShifts) {
@@ -2513,10 +2512,10 @@ export default function App() {
       };
     });
     try {
+      // Always delete first, then insert if there are shifts
+      await api.del("shifts", `staff_id=eq.${staffId}&year=eq.${y}&month=eq.${m}`);
       if (hasShifts) {
-        await api.upsert("shifts", { staff_id: staffId, year: y, month: m, shifts, submitted_at: new Date().toISOString() });
-      } else {
-        await api.del("shifts", `staff_id=eq.${staffId}&year=eq.${y}&month=eq.${m}`);
+        await api.post("shifts", { staff_id: staffId, year: y, month: m, shifts, submitted_at: new Date().toISOString() });
       }
     } catch (e) { console.error("Save shift error:", e); }
   }, []);
