@@ -2466,13 +2466,15 @@ export default function App() {
 
   const deleteShift = useCallback(async (staffId, y, m) => {
     const key = `${staffId}_${y}-${m}`;
-    const updated = { ...shiftsData };
-    delete updated[key];
-    setShiftsData(updated);
+    setShiftsData((prev) => {
+      const updated = { ...prev };
+      delete updated[key];
+      return updated;
+    });
     try {
       await api.del("shifts", `staff_id=eq.${staffId}&year=eq.${y}&month=eq.${m}`);
     } catch (e) { console.error("Delete shift error:", e); }
-  }, [shiftsData]);
+  }, []);
 
   const confirmShift = useCallback(async (y, m) => {
     const key = `${y}-${m}`;
@@ -2497,15 +2499,27 @@ export default function App() {
 
   const saveShift = useCallback(async (staffId, y, m, shifts) => {
     const key = `${staffId}_${y}-${m}`;
-    const updated = {
-      ...shiftsData,
-      [key]: { staffId, year: y, month: m, shifts, submittedAt: new Date().toISOString() },
-    };
-    setShiftsData(updated);
+    // If shifts is empty, delete the record
+    const hasShifts = Object.keys(shifts).length > 0;
+    setShiftsData((prev) => {
+      if (!hasShifts) {
+        const updated = { ...prev };
+        delete updated[key];
+        return updated;
+      }
+      return {
+        ...prev,
+        [key]: { staffId, year: y, month: m, shifts, submittedAt: new Date().toISOString() },
+      };
+    });
     try {
-      await api.upsert("shifts", { staff_id: staffId, year: y, month: m, shifts, submitted_at: new Date().toISOString() });
+      if (hasShifts) {
+        await api.upsert("shifts", { staff_id: staffId, year: y, month: m, shifts, submitted_at: new Date().toISOString() });
+      } else {
+        await api.del("shifts", `staff_id=eq.${staffId}&year=eq.${y}&month=eq.${m}`);
+      }
     } catch (e) { console.error("Save shift error:", e); }
-  }, [shiftsData]);
+  }, []);
 
   const changeMonth = useCallback((y, m) => {
     setYear(y);
