@@ -355,6 +355,15 @@ function TopPage({ onNavigate }) {
           >
             🔒 管理者用
           </button>
+          <button
+            className="fade-in-d3"
+            style={{ ...styles.btn("#10B981"), padding: "20px 24px", fontSize: 17, borderRadius: 14 }}
+            onClick={() => onNavigate("staffCalendar")}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 12px rgba(16,185,129,0.3)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)"; }}
+          >
+            📋 確定シフトを見る
+          </button>
         </div>
       </div>
     </>
@@ -1020,10 +1029,11 @@ function GroupCalendar({ group, groups, staffList, shiftsData, year, month, onCh
 
 
 // ─── PDF CALENDAR PAGE ───────────────────────────────────
-function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, onToggleParen, eventOverrides, onToggleEvent, groups, onSaveShift }) {
+function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, onToggleParen, eventOverrides, onToggleEvent, groups, onSaveShift, confirmations, onConfirm, onUnconfirm }) {
   const days = getDaysInMonth(year, month);
   const [editMode, setEditMode] = useState(false);
   const [editAction, setEditAction] = useState(null);
+  const isConfirmed = !!confirmations[`${year}-${month}`];
 
   const buildDayEntries = (viewGroup) => {
     const entries = {};
@@ -1343,6 +1353,42 @@ function PDFCalendarPage({ staffList, shiftsData, year, month, onChangeMonth, on
             ② <strong>HTMLファイル</strong>がダウンロードされます<br />
             ③ ダウンロードしたファイルを<strong>ダブルクリックで開く</strong>（ブラウザで開きます）<br />
             ④ 開いた画面で「印刷 / PDF保存」ボタン → 送信先で「<strong>PDFに保存</strong>」を選択
+          </div>
+        </div>
+
+        {/* Confirm / Unconfirm */}
+        <div style={{
+          ...styles.card, padding: "16px 20px",
+          border: isConfirmed ? "2px solid #10B981" : "1.5px solid #E2E8F0",
+          background: isConfirmed ? "#F0FDF4" : "#FFFFFF",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: isConfirmed ? "#10B981" : "#475569" }}>
+                {isConfirmed ? "✅ シフト確定済み" : "シフト未確定"}
+              </div>
+              <div style={{ fontSize: 12, color: isConfirmed ? "#065F46" : "#94A3B8", marginTop: 2 }}>
+                {isConfirmed
+                  ? `${year}年${month}月のシフトは確定済みです。スタッフ画面にカレンダーが表示されています。`
+                  : "確定するとスタッフ画面でカレンダーが閲覧できるようになります。"
+                }
+              </div>
+            </div>
+            {isConfirmed ? (
+              <button
+                style={styles.btnSm("#EF4444", true)}
+                onClick={() => onUnconfirm(year, month)}
+              >
+                確定を解除
+              </button>
+            ) : (
+              <button
+                style={styles.btn("#10B981")}
+                onClick={() => onConfirm(year, month)}
+              >
+                ✅ シフトを確定する
+              </button>
+            )}
           </div>
         </div>
 
@@ -2165,6 +2211,131 @@ function GroupManagePage({ groups, onSave, onBack }) {
   );
 }
 
+// ─── STAFF CALENDAR VIEW (confirmed shifts for staff) ────
+function StaffCalendarView({ staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, eventOverrides, groups, confirmations }) {
+  const days = getDaysInMonth(year, month);
+  const isConfirmed = !!confirmations[`${year}-${month}`];
+
+  const buildDayEntries = (viewGroup) => {
+    const entries = {};
+    for (let d = 1; d <= days; d++) {
+      const primary = [];
+      const secondary = [];
+      staffList.forEach((staff) => {
+        const shiftEntry = shiftsData[`${staff.id}_${year}-${month}`];
+        if (!shiftEntry) return;
+        if (shiftEntry.shifts[d] !== "work") return;
+        const eventKey = `${viewGroup}_${d}_${staff.id}`;
+        if (eventOverrides[eventKey]) return;
+        const displayName = getLastName(staff);
+        const isOtherGroup = staff.group !== viewGroup;
+        const overrideKey = `${viewGroup}_${d}_${staff.id}`;
+        const overridden = !!parenOverrides[overrideKey];
+        const useParen = isOtherGroup ? !overridden : overridden;
+        if (useParen) {
+          secondary.push({ name: `(${displayName})`, staffId: staff.id, day: d, viewGroup });
+        } else {
+          primary.push({ name: displayName, staffId: staff.id, day: d, viewGroup });
+        }
+      });
+      entries[d] = { primary, secondary };
+    }
+    return entries;
+  };
+
+  const allGroupEntries = useMemo(() => {
+    const result = {};
+    groups.forEach((gr) => { result[gr.id] = buildDayEntries(gr.id); });
+    return result;
+  }, [staffList, shiftsData, year, month, parenOverrides, eventOverrides, groups]);
+
+  const contactList = useMemo(() => {
+    return staffList.filter((s) => s.phone && s.phone.trim() !== "");
+  }, [staffList]);
+
+  return (
+    <>
+      <Header title="確定シフト" onBack={onBack} />
+      <div style={styles.container}>
+        <MonthSelector year={year} month={month} onChange={onChangeMonth} />
+
+        {!isConfirmed ? (
+          <div style={{ ...styles.card, textAlign: "center", padding: "48px 24px" }}>
+            <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.5 }}>📋</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "#64748B", marginBottom: 6 }}>
+              {year}年{month}月のシフトはまだ確定されていません
+            </div>
+            <div style={{ fontSize: 13, color: "#94A3B8" }}>
+              管理者がシフトを確定すると、ここにカレンダーが表示されます。
+            </div>
+          </div>
+        ) : (
+          <div id="staff-calendar-view">
+            <style>{`
+              .pdf-page {
+                width: 100%;
+                padding: 4mm 2mm;
+                margin: 0 auto 20px;
+                background: white;
+                box-sizing: border-box;
+                font-family: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
+                color: #000;
+              }
+              .pdf-header {
+                display: flex; align-items: center; justify-content: space-between;
+                margin-bottom: 3mm; padding: 0 2mm 1.5mm; border-bottom: 1px solid #000;
+              }
+              .pdf-month { font-size: 16pt; font-weight: 700; border-bottom: 2px solid #000; padding-bottom: 1mm; }
+              .pdf-title { font-size: 13pt; font-weight: 500; }
+              .pdf-calendar { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 2mm; }
+              .pdf-calendar th { border: 1px solid #333; padding: 1mm 0; font-size: 9pt; font-weight: 600; text-align: center; background: #F5F5F5; }
+              .pdf-calendar th.sun { color: #C00000; }
+              .pdf-calendar th.sat { color: #0070C0; }
+              .pdf-calendar td { border: 1px solid #333; vertical-align: top; padding: 0.8mm 0.5mm 1mm; height: 22mm; font-size: 8pt; line-height: 1.25; overflow: hidden; text-align: center; }
+              .pdf-calendar td.sun { background: #FDF4F4; }
+              .pdf-calendar td.sat { background: #F4F8FD; }
+              .pdf-calendar td.empty-day { background: #FAFAFA; border: 1px solid #DDD; }
+              .pdf-daynum { font-weight: 700; font-size: 9pt; display: block; margin-bottom: 0.3mm; text-align: center; }
+              .pdf-daynum.sun { color: #C00000; }
+              .pdf-daynum.sat { color: #0070C0; }
+              .pdf-name { display: block; font-size: 8pt; font-weight: 500; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+              .pdf-name.secondary { color: #555; font-weight: 400; }
+              .pdf-contacts { margin-top: 2mm; padding: 2mm 4mm; border: 1px solid #333; background: #FAFAFA; }
+              .pdf-contacts-title { font-size: 10pt; font-weight: 700; margin-bottom: 1.5mm; }
+              .pdf-contacts-list { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1mm 4mm; font-size: 9pt; }
+              .pdf-contact-item { display: flex; align-items: baseline; gap: 2mm; }
+              .pdf-contact-item::before { content: "・"; margin-right: 0.5mm; }
+              .pdf-contact-name { min-width: 10mm; font-weight: 600; }
+            `}</style>
+
+            {groups.map((gr) => (
+              <div key={gr.id} className="pdf-page" style={{ border: "1px solid #E2E8F0", borderRadius: 8, marginBottom: 16, padding: "4mm 3mm" }}>
+                <CalendarPage
+                  monthStr={`${year}.${String(month).padStart(2, "0")}`}
+                  title={gr.name}
+                  year={year}
+                  month={month}
+                  days={days}
+                  entries={allGroupEntries[gr.id] || {}}
+                  contacts={contactList}
+                  onToggleParen={() => {}}
+                  eventOverrides={eventOverrides}
+                  onToggleEvent={() => {}}
+                  viewGroup={gr.id}
+                  staffList={staffList}
+                  shiftsData={shiftsData}
+                  editMode={false}
+                  editAction={null}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ─── MAIN APP ────────────────────────────────────────────
 export default function App() {
   const [page, setPage] = useState("top");
@@ -2179,6 +2350,7 @@ export default function App() {
   const [parenOverrides, setParenOverrides] = useState({});
   const [eventOverrides, setEventOverrides] = useState({});
   const [deadlines, setDeadlines] = useState({});
+  const [confirmations, setConfirmations] = useState({});
   const [groups, setGroups] = useState([]);
 
   useEffect(() => {
@@ -2191,7 +2363,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [staffRows, shiftRows, adminRows, parenRows, eventRows, deadlineRows, groupRows] = await Promise.all([
+        const [staffRows, shiftRows, adminRows, parenRows, eventRows, deadlineRows, groupRows, confirmRows] = await Promise.all([
           api.get("staff", "order=created_at"),
           api.get("shifts"),
           api.get("admin_settings"),
@@ -2199,6 +2371,7 @@ export default function App() {
           api.get("event_overrides"),
           api.get("shift_deadlines"),
           api.get("groups", "order=sort_order"),
+          api.get("shift_confirmations"),
         ]);
         setStaffList(staffRows.map(dbToStaff));
         setShiftsData(dbShiftsToMap(shiftRows));
@@ -2210,6 +2383,9 @@ export default function App() {
         deadlineRows.forEach((r) => { dlMap[`${r.year}-${r.month}`] = r.deadline_date; });
         setDeadlines(dlMap);
         setGroups(groupRows.map((r) => ({ id: r.id, name: r.name, sort_order: r.sort_order })));
+        const cfMap = {};
+        confirmRows.forEach((r) => { cfMap[`${r.year}-${r.month}`] = r.confirmed_at; });
+        setConfirmations(cfMap);
       } catch (e) {
         console.error("Load error:", e);
       }
@@ -2298,6 +2474,27 @@ export default function App() {
     } catch (e) { console.error("Delete shift error:", e); }
   }, [shiftsData]);
 
+  const confirmShift = useCallback(async (y, m) => {
+    const key = `${y}-${m}`;
+    const now = new Date().toISOString();
+    setConfirmations((prev) => ({ ...prev, [key]: now }));
+    try {
+      await api.upsert("shift_confirmations", { year: y, month: m, confirmed_at: now });
+    } catch (e) { console.error("Confirm shift error:", e); }
+  }, []);
+
+  const unconfirmShift = useCallback(async (y, m) => {
+    const key = `${y}-${m}`;
+    setConfirmations((prev) => {
+      const updated = { ...prev };
+      delete updated[key];
+      return updated;
+    });
+    try {
+      await api.del("shift_confirmations", `year=eq.${y}&month=eq.${m}`);
+    } catch (e) { console.error("Unconfirm shift error:", e); }
+  }, []);
+
   const saveShift = useCallback(async (staffId, y, m, shifts) => {
     const key = `${staffId}_${y}-${m}`;
     const updated = {
@@ -2375,6 +2572,21 @@ export default function App() {
             setPage("shiftInput");
           }}
           onBack={() => setPage("top")}
+        />
+      )}
+
+      {page === "staffCalendar" && (
+        <StaffCalendarView
+          staffList={staffList}
+          shiftsData={shiftsData}
+          year={year}
+          month={month}
+          onChangeMonth={changeMonth}
+          onBack={() => setPage("top")}
+          parenOverrides={parenOverrides}
+          eventOverrides={eventOverrides}
+          groups={groups}
+          confirmations={confirmations}
         />
       )}
 
@@ -2466,6 +2678,9 @@ export default function App() {
           onToggleEvent={toggleEvent}
           groups={groups}
           onSaveShift={saveShift}
+          confirmations={confirmations}
+          onConfirm={confirmShift}
+          onUnconfirm={unconfirmShift}
         />
       )}
 
