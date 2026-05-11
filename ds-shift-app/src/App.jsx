@@ -2212,7 +2212,43 @@ function GroupManagePage({ groups, onSave, onBack }) {
 }
 
 // ─── STAFF CALENDAR VIEW (confirmed shifts for staff) ────
-function StaffCalendarView({ staffList, shiftsData, year, month, onChangeMonth, onBack, parenOverrides, eventOverrides, groups, confirmations }) {
+function StaffCalendarView({ staffList: initialStaffList, shiftsData: initialShiftsData, year, month, onChangeMonth, onBack, parenOverrides: initialParenOverrides, eventOverrides: initialEventOverrides, groups: initialGroups, confirmations: initialConfirmations }) {
+  const [staffList, setStaffList] = useState(initialStaffList);
+  const [shiftsData, setShiftsData] = useState(initialShiftsData);
+  const [parenOverrides, setParenOverrides] = useState(initialParenOverrides);
+  const [eventOverrides, setEventOverrides] = useState(initialEventOverrides);
+  const [groups, setGroups] = useState(initialGroups);
+  const [confirmations, setConfirmations] = useState(initialConfirmations);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch latest data every time this page is opened or month changes
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const [staffRows, shiftRows, parenRows, eventRows, groupRows, confirmRows] = await Promise.all([
+          api.get("staff", "order=created_at"),
+          api.get("shifts"),
+          api.get("paren_overrides"),
+          api.get("event_overrides"),
+          api.get("groups", "order=sort_order"),
+          api.get("shift_confirmations"),
+        ]);
+        if (cancelled) return;
+        setStaffList(staffRows.map(dbToStaff));
+        setShiftsData(dbShiftsToMap(shiftRows));
+        setParenOverrides(dbParenToMap(parenRows));
+        setEventOverrides(dbEventToMap(eventRows, groupRows.map((r) => r.id)));
+        setGroups(groupRows.map((r) => ({ id: r.id, name: r.name, sort_order: r.sort_order })));
+        const cfMap = {};
+        confirmRows.forEach((r) => { cfMap[`${r.year}-${r.month}`] = r.confirmed_at; });
+        setConfirmations(cfMap);
+      } catch (e) { console.error("Staff calendar refresh error:", e); }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [year, month]);
   const days = getDaysInMonth(year, month);
   const isConfirmed = !!confirmations[`${year}-${month}`];
 
@@ -2259,7 +2295,11 @@ function StaffCalendarView({ staffList, shiftsData, year, month, onChangeMonth, 
       <div style={styles.container}>
         <MonthSelector year={year} month={month} onChange={onChangeMonth} />
 
-        {!isConfirmed ? (
+        {loading ? (
+          <div style={{ ...styles.card, textAlign: "center", padding: "48px 24px" }}>
+            <div style={{ fontSize: 14, color: "#64748B" }}>最新データを読み込み中...</div>
+          </div>
+        ) : !isConfirmed ? (
           <div style={{ ...styles.card, textAlign: "center", padding: "48px 24px" }}>
             <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.5 }}>📋</div>
             <div style={{ fontSize: 16, fontWeight: 600, color: "#64748B", marginBottom: 6 }}>
